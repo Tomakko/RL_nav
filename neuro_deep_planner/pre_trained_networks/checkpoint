@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/martin/catkin_ws/src/neuro_deep_planner/src/../pre_trained_networks/pre_trained_networks-50000"
+all_model_checkpoint_paths: "/home/martin/catkin_ws/src/neuro_deep_planner/src/../pre_trained_networks/pre_trained_networks-50000"
