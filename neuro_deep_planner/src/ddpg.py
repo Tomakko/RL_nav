@@ -32,12 +32,23 @@ A1_BOUNDS = [-0.3, 0.3]
 # Should we load a saved net
 PRE_TRAINED_NETS = False
 
+# data path where experiences, saved networks, and tf logs are stored
+DATA_PATH = '/media/nutzer/D478693978691C0C/RL_nav_data'
+# os.path.expanduser('~')
+# os.path.join(os.path.dirname(__file__), os.pardir)
+
 # If we use a pretrained net
-NET_SAVE_PATH = os.path.join(os.path.dirname(__file__), os.pardir)+"/pre_trained_networks/pre_trained_networks"
-NET_LOAD_PATH = os.path.join(os.path.dirname(__file__), os.pardir)+"/pre_trained_networks/pre_trained_networks-300000"
+NET_SAVE_PATH = DATA_PATH + "/pre_trained_networks/pre_trained_networks"
+NET_LOAD_PATH = DATA_PATH + "/pre_trained_networks/pre_trained_networks-300000"
 
 # If we don't use a pretrained net we should load pre-trained filters from this path
-FILTER_LOAD_PATH = os.path.join(os.path.dirname(__file__), os.pardir) + "/pre_trained_filters/pre_trained_filters"
+FILTER_LOAD_PATH = DATA_PATH + "/pre_trained_filters/pre_trained_filters"
+
+# path to tensorboard data
+TFLOG_PATH = DATA_PATH + '/tf_logs'
+
+# path to experience files
+EXPERIENCE_PATH = DATA_PATH + '/experiences'
 
 # Should we use an existing initial buffer with experiences
 NEW_INITIAL_BUFFER = False
@@ -82,7 +93,7 @@ class DDPG:
 
             # Initialize summary writers to plot variables during training
             self.summary_op = tf.merge_all_summaries()
-            self.summary_writer = tf.train.SummaryWriter(os.path.expanduser('~')+'/tensorboard_data')
+            self.summary_writer = tf.train.SummaryWriter(TFLOG_PATH)
 
             # Initialize actor and critic networks
             self.actor_network = ActorNetwork(self.height, self.action_dim, self.depth, self.session,
@@ -94,7 +105,7 @@ class DDPG:
             self.saver = tf.train.Saver()
 
             # initialize the experience data manger
-            self.data_manager = DataManager(self.session.graph, self.session, BATCH_SIZE)
+            self.data_manager = DataManager(BATCH_SIZE, EXPERIENCE_PATH, self.session)
 
             # Should we load the pre-trained params?
             # If so: Load the full pre-trained net

@@ -350,7 +350,7 @@ namespace neuro_local_planner_wrapper
 
             // open file for printing
             std::ofstream outfile;
-            std::string my_file_path = "/home/breuning/results/counters.csv";
+            std::string my_file_path = "/media/nutzer/D478693978691C0C/RL_nav_data/eval";
             outfile.open(my_file_path.c_str());
 
             for (unsigned int i = 0; i < plot_list_.size(); i++)

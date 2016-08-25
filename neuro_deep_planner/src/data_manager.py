@@ -1,23 +1,20 @@
 import tensorflow as tf
-import os.path
 import numpy as np
 
 
 # Parameters:
-NUM_EXPERIENCES = 100		# How many experiences stored per file
+NUM_EXPERIENCES = 1000		# How many experiences stored per file
 MIN_FILE_NUM = 2           # How many files at minimum do we need for training
 PRE_STORED_DATA_FILES = 0  # How many files are already stored in our Date folder
 
 MIN_FILES_IN_QUEUE = 10     # Files are added when this Number is reached
 NEW_FILES_TO_ADD = 100      # How many files are added to the fifo file queue
 
-FILE_PATCH = '/Data_Experiences'
-
 
 class DataManager:
 
-    def __init__(self, graph, session, batch_size):
-        self.graph = graph
+    def __init__(self, batch_size, p_experience_path, session):
+        self.graph = session.graph
         with self.graph.as_default():
 
             # initialize session
@@ -25,6 +22,8 @@ class DataManager:
 
             # set batch size
             self.batch_size = batch_size
+
+            self.experience_path = p_experience_path
 
             # set file counter to number of pre-stored files
             self.file_counter = PRE_STORED_DATA_FILES
@@ -54,7 +53,7 @@ class DataManager:
                 self.is_episode_finished_batch = self.build_next_batch_op()
 
             # filepath to stored files
-            self.filename = os.path.expanduser('~') + FILE_PATCH + '/data_' + str(self.file_counter) + '.tfrecords'
+            self.filename = self.experience_path + '/data_' + str(self.file_counter) + '.tfrecords'
 
             # init the write that writes the tfrecords
             self.writer = tf.python_io.TFRecordWriter(self.filename)
@@ -116,7 +115,7 @@ class DataManager:
     # enqueue the number of prestored experience files specified in PRE_STORED_DATA_FILES
     def enqueue_prestored_experiences(self):
         for i in range(0, PRE_STORED_DATA_FILES):
-            filename = os.path.expanduser('~') + FILE_PATCH + '/data_' + str(i) + '.tfrecords'
+            filename = self.experience_path + '/data_' + str(i) + '.tfrecords'
 
             self.sess.run(self.enqueue_op, feed_dict={self.filename_placeholder: filename})
             print i
@@ -133,7 +132,7 @@ class DataManager:
                 random_array = np.zeros(100, dtype=np.int8)
 
             for i in range(NEW_FILES_TO_ADD):
-                filename = os.path.expanduser('~') + FILE_PATCH + '/data_' + str(random_array[i]) + '.tfrecords'
+                filename = self.experience_path + '/data_' + str(random_array[i]) + '.tfrecords'
                 self.sess.run(self.enqueue_op, feed_dict={self.filename_placeholder: filename})
 
     # stores experiences sequentially to files
@@ -167,5 +166,5 @@ class DataManager:
             self.file_counter += 1
 
             # create new file
-            self.filename = os.path.expanduser('~') + FILE_PATCH + '/data_' + str(self.file_counter) + '.tfrecords'
+            self.filename = self.experience_path + '/data_' + str(self.file_counter) + '.tfrecords'
             self.writer = tf.python_io.TFRecordWriter(self.filename)
