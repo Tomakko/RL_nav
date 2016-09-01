@@ -6,6 +6,8 @@ from grad_inverter import GradInverter
 import tensorflow as tf
 from data_manager import DataManager
 
+import prio_data_manager
+
 # For saving replay buffer
 import os
 import time
@@ -33,8 +35,8 @@ A1_BOUNDS = [-0.3, 0.3]
 PRE_TRAINED_NETS = False
 
 # data path where experiences, saved networks, and tf logs are stored
-DATA_PATH = '/media/nutzer/D478693978691C0C/RL_nav_data'
-# os.path.expanduser('~')
+#DATA_PATH = '/media/nutzer/D478693978691C0C/RL_nav_data'
+DATA_PATH = os.path.expanduser('~') + '/RL_nav_data'
 # os.path.join(os.path.dirname(__file__), os.pardir)
 
 # If we use a pretrained net
@@ -83,10 +85,14 @@ class DDPG:
 
             # Initialize the current action and the old action and old state for setting experiences
             self.old_state = np.zeros((self.width, self.height, self.depth), dtype='int8')
-            self.old_action = np.zeros(2, dtype='float')
+            self.old_action_output = np.zeros(2, dtype='float')
+            self.net_q_value = np.zeros(1, dtype='float')
+            self.q_value = np.zeros(1, dtype='float')
+            self.old_q_value = np.zeros(1, dtype='float')
             self.network_action = np.zeros(2, dtype='float')
             self.noise_action = np.zeros(2, dtype='float')
-            self.action = np.zeros(2, dtype='float')
+            self.action_output = np.zeros(2, dtype='float')
+            self.net_action = np.zeros(2, dtype='float')
 
             # Initialize the grad inverter object to keep the action bounds
             self.grad_inv = GradInverter(A0_BOUNDS, A1_BOUNDS, self.session)
@@ -106,12 +112,14 @@ class DDPG:
 
             # initialize the experience data manger
             self.data_manager = DataManager(BATCH_SIZE, EXPERIENCE_PATH, self.session)
+            #self.prio_data_manager = prio_data_manager.DataSet(random_state = None, max_size= 1000000,
+            #                                                   use_priority= True)
 
             # Should we load the pre-trained params?
-            # If so: Load the full pre-trained net
+            # If so: Load the full re-trained net
             # Else:  Initialize all variables the overwrite the conv layers with the pretrained filters
             if PRE_TRAINED_NETS:
-                self.saver.restore(self.session, NET_LOAD_PATH)
+                self.saver.restore(self.session, NET_LOAD_PATH)#
                 print "restored net"
             else:
                 print "loading filters"
@@ -140,6 +148,7 @@ class DDPG:
         # Check if the buffer is big enough to start training
         if self.data_manager.enough_data():
 
+            # TODO: get batch from prio manager
             # get the next random batch from the data manger
             state_batch, \
                 action_batch, \
@@ -197,30 +206,39 @@ class DDPG:
         state = np.divide(state, 100.0)
 
         # Get the action
-        self.action = self.actor_network.get_action(state)
-        print "nt act", self.action
+        self.net_action = self.actor_network.get_action(state)
+        print "nt act", self.net_action
 
         # Are we using noise?
         if self.noise_flag:
-            self.action += self.exploration_noise.noise()
+            self.action_output = self.net_action + self.exploration_noise.noise()
             # if action value lies outside of action bounds, rescale the action vector
-            if self.action[0] < A0_BOUNDS[0] or self.action[0] > A0_BOUNDS[1]:
-                self.action = self.action*np.fabs(A0_BOUNDS[0]/self.action[0])
-            if self.action[1] < A0_BOUNDS[0] or self.action[1] > A0_BOUNDS[1]:
-                self.action = self.action*np.fabs(A1_BOUNDS[0]/self.action[1])
+            if self.action_output[0] < A0_BOUNDS[0] or self.action_output[0] > A0_BOUNDS[1]:
+                self.action_output = self.action_output*np.fabs(A0_BOUNDS[0]/self.action_output[0])
+            if self.action_output[1] < A0_BOUNDS[0] or self.action_output[1] > A0_BOUNDS[1]:
+                self.action_output = self.action_output*np.fabs(A1_BOUNDS[0]/self.action_output[1])
 
-        # Live q value output for this action and state
-        self.print_q_value(state, self.action)
+        return self.action_output
 
-        return self.action
+    def process_dwa_action(self, dwa_actions):
+        self.action_output = dwa_actions
 
     def set_experience(self, state, reward, is_episode_finished):
+
+        self.q_value = self.critic_network.evaluate([state], [self.action_output])
+        # self.net_q_value = self.critic_network.evaluate([state], [self.net_action])
+        # Live q value output for this action and state
+        self.print_q_value(self.q_value)
+
+        # TODO: + epsilon?
+        #priority = np.fabs(self.old_q_value - (reward + GAMMA*self.net_q_value))
+        #self.prio_data_manager.addSample(self.old_action, self.old_action, reward, is_episode_finished, priority )
 
         # Make sure we're saving a new old_state for the first experience of every episode
         if self.first_experience:
             self.first_experience = False
         else:
-            self.data_manager.store_experience_to_file(self.old_state, self.old_action, reward, state,
+            self.data_manager.store_experience_to_file(self.old_state, self.old_action_output, reward, state,
                                                        is_episode_finished)
 
         if is_episode_finished:
@@ -229,12 +247,12 @@ class DDPG:
 
         # Safe old state and old action for next experience
         self.old_state = state
-        self.old_action = self.action
+        self.old_action_output = self.action_output
+        self.old_q_value = self.q_value
 
-    def print_q_value(self, state, action):
+    def print_q_value(self, q_value):
 
         string = "-"
-        q_value = self.critic_network.evaluate([state], [action])
         stroke_pos = 30 * q_value[0][0] + 30
         if stroke_pos < 0:
             stroke_pos = 0

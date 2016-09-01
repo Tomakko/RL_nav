@@ -53,7 +53,11 @@ namespace neuro_local_planner_wrapper
         private:
 
             // Callback function for the subscriber to laser scan
-            void buildStateRepresentation(sensor_msgs::LaserScan laser_scan);
+            void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& laser_scan);
+
+            bool buildStateRepresentation(const sensor_msgs::LaserScan::ConstPtr& laser_scan);
+
+            void publishDwaAction();
 
             bool isCrashed(double& reward);
 
@@ -69,11 +73,13 @@ namespace neuro_local_planner_wrapper
 
             void callbackAction(geometry_msgs::Twist action);
 
-            void addLaserScanPoints(const sensor_msgs::LaserScan& laser_scan);
+            void checkNoiseToggle();
+
+            void resetRobot();
+
+            void addLaserScanPoints(const sensor_msgs::LaserScan::ConstPtr& laser_scan);
 
             void addGlobalPlan();
-
-            void storeResult(const neuro_local_planner_wrapper::Transition& transition);
 
             // Listener to get our pose on the map
             tf::TransformListener* tf_;
