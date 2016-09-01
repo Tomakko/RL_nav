@@ -36,8 +36,7 @@ namespace neuro_local_planner_wrapper
 
             state_pub_ = private_nh.advertise<std_msgs::Bool>("new_round", 1);
 
-            laser_scan_sub_ = private_nh.subscribe("/scan", 1000, &NeuroLocalPlannerWrapper::buildStateRepresentation,
-                                                   this);
+            laser_scan_sub_ = private_nh.subscribe<sensor_msgs::LaserScan>("/scan", 1000, &NeuroLocalPlannerWrapper::laserScanCallback, this);
 
             customized_costmap_pub_ = private_nh.advertise<nav_msgs::OccupancyGrid>("customized_costmap", 1);
 
@@ -127,7 +126,7 @@ namespace neuro_local_planner_wrapper
 
         // If we use the dwa:
         // This code is copied from the dwa_planner
-        if (existing_plugin_)
+        if (EXISTING_PLUGIN)
         {
             if (!tc_->setPlan(orig_global_plan))
             {
@@ -191,7 +190,7 @@ namespace neuro_local_planner_wrapper
         // info
         transition_msg_.width = customized_costmap_.info.width;
         transition_msg_.height = customized_costmap_.info.height;
-        transition_msg_.depth = 4; // use four consecutive maps for state representation 
+        transition_msg_.depth = 4; // use four consecutive maps for state representation
     }
 
 
@@ -295,102 +294,64 @@ namespace neuro_local_planner_wrapper
     void NeuroLocalPlannerWrapper::callbackAction(geometry_msgs::Twist action)
     {
         // Should we use the network as a planner or the dwa planner?
-        if (!existing_plugin_)
+        if (!EXISTING_PLUGIN)
         {
             // Get action from net
             action_ = action;
+
+
+            // Publish
+            action_pub_.publish(action_);
         }
-        else
+    }
+
+    // gets called every time new laser scan data is received
+    void NeuroLocalPlannerWrapper::laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& laser_scan)
+    {
+        checkNoiseToggle();
+        bool sentTranitionMsg;
+        sentTranitionMsg = buildStateRepresentation(laser_scan);
+
+        // publish dwa action if dwa is active
+        if (EXISTING_PLUGIN && sentTranitionMsg)
         {
-            // Use the existing local planner plugin
+            publishDwaAction();
+        }
+
+    }
+
+    void NeuroLocalPlannerWrapper::publishDwaAction()
+    {
+        {
             geometry_msgs::Twist cmd;
-            if(tc_->computeVelocityCommands(cmd))
-            {
+            if (tc_->computeVelocityCommands(cmd)) {
                 if (is_running_) {
                     action_ = cmd;
                 }
             }
-            else
-            {
+            else {
                 ROS_ERROR("Plugin failed computing a command");
             }
-        }
 
-        // Publish
-        action_pub_.publish(action_);
+            // Publish
+            action_pub_.publish(action_);
+        }
     }
 
-
-    // Callback function for the subscriber to the laser scan
-    void NeuroLocalPlannerWrapper::buildStateRepresentation(sensor_msgs::LaserScan laser_scan)
+    // builds the data message for the ddpg algorithm including the state representation
+    bool NeuroLocalPlannerWrapper::buildStateRepresentation(const sensor_msgs::LaserScan::ConstPtr& laser_scan)
     {
-        // Safe the
-        int now = (int)ros::Time::now().toSec();
-        if (noise_flag_ && (now - temp_time_) > 3000)
-        {
-            temp_crash_count_ = crash_counter_;
-            temp_goal_count_ = goal_counter_;
-
-            noise_flag_ = false;
-
-            std_msgs::Bool msg;
-            msg.data = 0;
-
-            noise_flag_pub_.publish(msg);
-
-            temp_time_ = now;
-        }
-        if (!noise_flag_ && (now - temp_time_) > 600)
-        {
-            std::pair<int, int> temp_count;
-            temp_count.first = crash_counter_ - temp_crash_count_;
-            temp_count.second = goal_counter_ - temp_goal_count_;
-
-            plot_list_.push_back(temp_count);
-
-            // open file for printing
-            std::ofstream outfile;
-            std::string my_file_path = "/media/nutzer/D478693978691C0C/RL_nav_data/eval";
-            outfile.open(my_file_path.c_str());
-
-            for (unsigned int i = 0; i < plot_list_.size(); i++)
-            {
-                outfile << plot_list_.at(i).first << "," << plot_list_.at(i).second << std::endl;
-            }
-
-            outfile.close();
-
-            noise_flag_ = true;
-
-            std_msgs::Bool msg;
-            msg.data = 1;
-
-            noise_flag_pub_.publish(msg);
-
-            temp_time_ = now;
-        }
+        checkNoiseToggle();
         if (is_running_)
         {
             double reward = 0.0;
 
             if (isCrashed(reward) || isGoalReached(reward))
             {
-                // New episode so restart the time count
-                start_time_ = ros::Time::now().toSec();
-
-                // This is the last transition published in this episode
-                is_running_ = false;
-
-                // Stop moving
-                setZeroAction();
-
-                // Publish that a new round can be started with the stage_sim_bot
-                std_msgs::Bool new_round;
-                new_round.data = 1;
-                state_pub_.publish(new_round);
+                resetRobot();
 
                 // Create transition message with empty state
-                transition_msg_.header.stamp = laser_scan.header.stamp;
+                transition_msg_.header.stamp = laser_scan->header.stamp;
                 transition_msg_.header.frame_id = customized_costmap_.header.frame_id;
                 transition_msg_.is_episode_finished = 1;
                 transition_msg_.reward = reward;
@@ -404,21 +365,13 @@ namespace neuro_local_planner_wrapper
                 // increment seq for next costmap
                 transition_msg_.header.seq = transition_msg_.header.seq + 1;
             }
+
+                // if episode exceeds max time
             else if (ros::Time::now().toSec() - start_time_ > max_time_)
             {
-                // New episode so restart the time count
-                start_time_ = ros::Time::now().toSec();
-
-                // This is the last transition published in this episode
-                is_running_ = false;
-
-                // Stop moving
-                setZeroAction();
-
-                // Publish that a new round can be started with the stage_sim_bot
-                std_msgs::Bool new_round;
-                new_round.data = 1;
-                state_pub_.publish(new_round);
+                resetRobot();
+                // clear transition message
+                transition_msg_.state_representation.clear();
             }
             else
             {
@@ -427,9 +380,9 @@ namespace neuro_local_planner_wrapper
                 customized_costmap_.data = data;
 
                 // to_delete: ------
-                customized_costmap_.header.stamp = laser_scan.header.stamp;
+                customized_costmap_.header.stamp = laser_scan->header.stamp;
 
-                // add global plan as white pixel with some gradient to indicate its direction
+                // add global plan as white pixel with blob at the goal
                 addGlobalPlan();
 
                 // add laser scan points as invalid/black pixel
@@ -462,23 +415,98 @@ namespace neuro_local_planner_wrapper
                     // increment seq for next costmap
                     transition_msg_.header.seq = transition_msg_.header.seq + 1;
 
-                    // clear buffer
+                    // clear transition message
                     transition_msg_.state_representation.clear();
+
+                    return true;
                 }
             }
         }
+        return false;
+    }
+
+    void NeuroLocalPlannerWrapper::resetRobot()
+    {
+        // New episode so restart the time count
+        start_time_ = ros::Time::now().toSec();
+
+        // This is the last transition published in this episode
+        is_running_ = false;
+
+        // Stop moving
+        setZeroAction();
+
+        // Publish that a new round can be started with the stage_sim_bot
+        std_msgs::Bool new_round;
+        new_round.data = 1;
+        state_pub_.publish(new_round);
+
+    }
+
+    // implements turning noise off for measuring learning progress
+    void NeuroLocalPlannerWrapper::checkNoiseToggle()
+    {
+        // Safe the
+        int now = (int)ros::Time::now().toSec();
+        // Noise is turned off
+        if (noise_flag_ && (now - temp_time_) > 3000)
+        {
+            temp_crash_count_ = crash_counter_;
+            temp_goal_count_ = goal_counter_;
+
+            noise_flag_ = false;
+
+            std_msgs::Bool msg;
+            msg.data = 0;
+
+            noise_flag_pub_.publish(msg);
+
+            temp_time_ = now;
+        }
+        // Noise is turned on
+        if (!noise_flag_ && (now - temp_time_) > 600)
+        {
+            std::pair<int, int> temp_count;
+            temp_count.first = crash_counter_ - temp_crash_count_;
+            temp_count.second = goal_counter_ - temp_goal_count_;
+
+            plot_list_.push_back(temp_count);
+
+            // open file for printing
+            std::ofstream outfile;
+            std::string my_file_path = "/media/nutzer/D478693978691C0C/RL_nav_data/eval";
+            outfile.open(my_file_path.c_str());
+
+            for (unsigned int i = 0; i < plot_list_.size(); i++)
+            {
+                outfile << plot_list_.at(i).first << "," << plot_list_.at(i).second << std::endl;
+            }
+
+            outfile.close();
+
+            noise_flag_ = true;
+
+            std_msgs::Bool msg;
+            msg.data = 1;
+
+            noise_flag_pub_.publish(msg);
+
+            temp_time_ = now;
+        }
+
+
     }
 
 
     // Helper function to generate the transition msg
-    void NeuroLocalPlannerWrapper::addLaserScanPoints(const sensor_msgs::LaserScan& laser_scan)
+    void NeuroLocalPlannerWrapper::addLaserScanPoints(const sensor_msgs::LaserScan::ConstPtr& laser_scan)
     {
         // get source frame and target frame of laser scan points
-        std::string laser_scan_source_frame = laser_scan.header.frame_id;
+        std::string laser_scan_source_frame = laser_scan->header.frame_id;
         std::string laser_scan_target_frame = customized_costmap_.header.frame_id;
 
         // stamp of first laser point in range
-        ros::Time laser_scan_stamp = laser_scan.header.stamp;
+        ros::Time laser_scan_stamp = laser_scan->header.stamp;
         ros::Time customized_costmap_stamp = laser_scan_stamp;
 
         // update stamp of costmap
@@ -505,16 +533,16 @@ namespace neuro_local_planner_wrapper
         double y_position_robot_base_frame;
 
         // iteration over all laser scan points
-        for(unsigned int i = 0; i < laser_scan.ranges.size(); i++)
+        for(unsigned int i = 0; i < laser_scan->ranges.size(); i++)
         {
-            if ((laser_scan.ranges.at(i) > laser_scan.range_min) && (laser_scan.ranges.at(i) < laser_scan.range_max))
+            if ((laser_scan->ranges.at(i) > laser_scan->range_min) && (laser_scan->ranges.at(i) < laser_scan->range_max))
             {
                 // get x and y coordinates of laser scan point in frame of laser scan, z coordinate is ignored as we
                 // are working with a 2D costmap
-                x_position_laser_scan_frame = laser_scan.ranges.at(i) * cos(laser_scan.angle_min
-                                                                            + i * laser_scan.angle_increment);
-                y_position_laser_scan_frame = laser_scan.ranges.at(i) * sin(laser_scan.angle_min
-                                                                            + i * laser_scan.angle_increment);
+                x_position_laser_scan_frame = laser_scan->ranges.at(i) * cos(laser_scan->angle_min
+                                                                            + i * laser_scan->angle_increment);
+                y_position_laser_scan_frame = laser_scan->ranges.at(i) * sin(laser_scan->angle_min
+                                                                            + i * laser_scan->angle_increment);
 
                 // translation
                 x_position_robot_base_frame = x_position_laser_scan_frame + stamped_transform.getOrigin().getX();
