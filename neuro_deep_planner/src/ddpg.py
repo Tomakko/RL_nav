@@ -20,7 +20,7 @@ from state_visualizer import CostmapVisualizer
 BATCH_SIZE = 32
 
 # How big is our discount factor for rewards
-GAMMA = 0.95
+GAMMA = 0.99
 
 # How does our noise behave (MU = Center value, THETA = How strong is noise pulled to MU, SIGMA = Variance of noise)
 MU = 0.0
@@ -35,13 +35,13 @@ A1_BOUNDS = [-0.3, 0.3]
 PRE_TRAINED_NETS = False
 
 # data path where experiences, saved networks, and tf logs are stored
-#DATA_PATH = '/media/nutzer/D478693978691C0C/RL_nav_data'
-DATA_PATH = os.path.expanduser('~') + '/RL_nav_data'
+DATA_PATH = '/media/nutzer/D478693978691C0C/RL_nav_data'
+#DATA_PATH = os.path.expanduser('~') + '/RL_nav_data'
 # os.path.join(os.path.dirname(__file__), os.pardir)
 
 # If we use a pretrained net
 NET_SAVE_PATH = DATA_PATH + "/pre_trained_networks/pre_trained_networks"
-NET_LOAD_PATH = DATA_PATH + "/pre_trained_networks/pre_trained_networks-300000"
+NET_LOAD_PATH = DATA_PATH + "/pre_trained_networks/pre_trained_networks-600000"
 
 # If we don't use a pretrained net we should load pre-trained filters from this path
 FILTER_LOAD_PATH = DATA_PATH + "/pre_trained_filters/pre_trained_filters"
@@ -51,9 +51,6 @@ TFLOG_PATH = DATA_PATH + '/tf_logs'
 
 # path to experience files
 EXPERIENCE_PATH = DATA_PATH + '/experiences'
-
-# Should we use an existing initial buffer with experiences
-NEW_INITIAL_BUFFER = False
 
 # Visualize an initial state batch for debugging
 VISUALIZE_BUFFER = False
@@ -167,7 +164,7 @@ class DDPG:
                 state_batch_np = np.add(state_batch_np, 100.0)
                 self.viewer.set_data(state_batch_np)
                 self.viewer.run()
-                self.visualize_input = False
+                self.visualize_input = True
 
             # Calculate y for the td_error of the critic
             y_batch = []
@@ -207,7 +204,7 @@ class DDPG:
 
         # Get the action
         self.net_action = self.actor_network.get_action(state)
-        print "nt act", self.net_action
+        print "net act", self.net_action
 
         # Are we using noise?
         if self.noise_flag:
@@ -217,6 +214,8 @@ class DDPG:
                 self.action_output = self.action_output*np.fabs(A0_BOUNDS[0]/self.action_output[0])
             if self.action_output[1] < A0_BOUNDS[0] or self.action_output[1] > A0_BOUNDS[1]:
                 self.action_output = self.action_output*np.fabs(A1_BOUNDS[0]/self.action_output[1])
+        else:
+            self.action_output = self.net_action
 
         return self.action_output
 
